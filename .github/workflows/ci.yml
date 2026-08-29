@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, rebuild-v3]
   pull_request:
 
 permissions:
@@ -14,36 +14,86 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Syntax checks
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Backend checks
         run: |
-          python -m compileall -q server.py ponkan
-          node --check public/app.js
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+          ruff check src tests
+          pytest -q
 
-      - name: Build Docker image
-        run: docker build -t ponkan:test .
-
-      - name: Run container
-        run: docker run -d --name ponkan-test -p 18080:8080 ponkan:test
-
-      - name: Smoke test API
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Frontend checks
+        working-directory: web
         run: |
-          curl --retry 15 --retry-delay 1 --retry-all-errors -fsS http://127.0.0.1:18080/api/health
-          curl -fsS http://127.0.0.1:18080/ >/dev/null
-          curl -fsS http://127.0.0.1:18080/api/sources | python -c "import json,sys; d=json.load(sys.stdin); assert len(d)>=4; print('sources:', len(d))"
-          curl -fsS 'http://127.0.0.1:18080/api/study/session?source_ids=1,2,3,4&limit=16' | python -c "import json,sys; d=json.load(sys.stdin); assert len(d['questions'])==16; assert {'en','ru','zh-CN','ja'} <= {q['prompt_lang'] for q in d['questions']}; print('mixed session: OK')"
-          curl -fsS -X POST http://127.0.0.1:18080/api/reviews -H 'Content-Type: application/json' -d '{"question_id":1,"correct":true,"response_ms":1200,"mode":"choice"}' | python -c "import json,sys; d=json.load(sys.stdin); assert d['seen']==1 and d['correct']==1; print('review/SRS: OK')"
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
 
-          SOURCE_ID=$(curl -fsS -X POST http://127.0.0.1:18080/api/sources -H 'Content-Type: application/json' -d '{"name":"CI source","kind":"manual","category":"certification","default_prompt_lang":"ja","default_answer_lang":"ja"}' | python -c "import json,sys; print(json.load(sys.stdin)['id'])")
-          QUESTION_ID=$(curl -fsS -X POST http://127.0.0.1:18080/api/questions -H 'Content-Type: application/json' -d "{\"source_id\":${SOURCE_ID},\"prompt\":\"CI question\",\"answer\":\"CI answer\",\"tags\":\"ci,test\"}" | python -c "import json,sys; print(json.load(sys.stdin)['id'])")
-          curl -fsS -X PUT "http://127.0.0.1:18080/api/sources/${SOURCE_ID}" -H 'Content-Type: application/json' -d '{"name":"CI source updated"}' | python -c "import json,sys; assert json.load(sys.stdin)['ok']"
-          curl -fsS "http://127.0.0.1:18080/api/questions?source_ids=${SOURCE_ID}" | python -c "import json,sys; d=json.load(sys.stdin); assert len(d)==1 and d[0]['prompt']=='CI question'; print('source/question CRUD: OK')"
-          curl -fsS -X DELETE "http://127.0.0.1:18080/api/questions/${QUESTION_ID}" >/dev/null
-          curl -fsS -X DELETE "http://127.0.0.1:18080/api/sources/${SOURCE_ID}" >/dev/null
+      - name: Compose validation
+        run: docker compose config >/dev/null
+        env:
+          POSTGRES_PASSWORD: ci-password
 
-      - name: Show logs on failure
+      - name: Build and start stack
+        run: docker compose up -d --build --wait
+        env:
+          POSTGRES_PASSWORD: ci-password
+          PONKAN_PORT: "18080"
+
+      - name: REST smoke test
+        run: |
+          curl --retry 20 --retry-all-errors --retry-delay 1 -fsS http://127.0.0.1:18080/api/v1/health
+          python - <<'PY'
+          import json, urllib.request
+          base='http://127.0.0.1:18080/api/v1'
+          materials=json.load(urllib.request.urlopen(base+'/materials'))
+          assert len(materials) >= 4
+          ids=[m['id'] for m in materials[:4]]
+          req=urllib.request.Request(base+'/study/sessions', data=json.dumps({'material_ids':ids,'limit':8}).encode(), headers={'Content-Type':'application/json'}, method='POST')
+          session=json.load(urllib.request.urlopen(req))
+          assert session['questions']
+          q=session['questions'][0]
+          req=urllib.request.Request(base+'/reviews', data=json.dumps({'question_id':q['id'],'session_id':session['session_id'],'rating':3,'response_ms':1800,'mode':'ci'}).encode(), headers={'Content-Type':'application/json'}, method='POST')
+          review=json.load(urllib.request.urlopen(req))
+          assert review['reps'] == 1
+          print('REST smoke OK')
+          PY
+
+      - name: MCP smoke test
+        run: |
+          docker compose exec -T app python - <<'PY'
+          import asyncio
+          from mcp import Client
+
+          async def main():
+              async with Client('http://127.0.0.1:8080/mcp/') as client:
+                  result = await client.list_tools()
+                  names = {tool.name for tool in result.tools}
+                  expected = {'list_materials','search_questions','create_study_session','submit_review','create_question','sync_import','get_learning_stats'}
+                  assert expected <= names, names
+                  called = await client.call_tool('get_learning_stats', {})
+                  assert not called.is_error
+                  print('MCP smoke OK:', client.protocol_version)
+          asyncio.run(main())
+          PY
+        env:
+          POSTGRES_PASSWORD: ci-password
+
+      - name: Logs on failure
         if: failure()
-        run: docker logs ponkan-test || true
+        run: docker compose logs
+        env:
+          POSTGRES_PASSWORD: ci-password
+          PONKAN_PORT: "18080"
 
-      - name: Clean up
+      - name: Stop stack
         if: always()
-        run: docker rm -f ponkan-test || true
+        run: docker compose down -v
+        env:
+          POSTGRES_PASSWORD: ci-password
+          PONKAN_PORT: "18080"
