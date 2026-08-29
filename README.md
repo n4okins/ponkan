@@ -47,7 +47,7 @@ docker compose up -d --build
 docker compose down
 ```
 
-データはホスト側の `./data/ponkan.db` に保存されます。コンテナを作り直しても消えません。
+教材・問題・学習履歴はDocker管理ボリューム `ponkan-data` 内の `/data/ponkan.db` に保存されます。通常の `docker compose down` やコンテナ再作成では消えません。`docker compose down -v` はボリュームも削除するため、データを残す場合は使用しないでください。
 
 ## 教材モデル
 
@@ -145,13 +145,14 @@ R(t) = 0.9 ^ (t / stability)
 
 ## バックアップ
 
-SQLiteファイルをコピーすればよいです。確実に整合したコピーを取るなら一時停止します。
+SQLiteのオンラインバックアップを作成してからホストへコピーできます。
 
 ```bash
-docker compose stop ponkan
-cp data/ponkan.db data/ponkan.db.backup
-docker compose start ponkan
+docker compose exec -T ponkan python -c "import sqlite3; s=sqlite3.connect('/data/ponkan.db'); d=sqlite3.connect('/data/ponkan.db.backup'); s.backup(d); d.close(); s.close()"
+docker cp ponkan:/data/ponkan.db.backup ./ponkan.db.backup
 ```
+
+復元時はPonkanを停止した上でバックアップDBを `/data/ponkan.db` として配置してください。
 
 ## セキュリティ
 
