@@ -68,6 +68,29 @@ def priority(progress, t):
     return weights.get(progress["mastery"], 50) + min(80, overdue * 4) + (1 - recall) * 55 + random.random() * 8
 
 
+def _generated_choices(question, pool):
+    """Generate plausible distractors without crossing domains unless necessary."""
+    answer = question["answer"]
+
+    same_source = [
+        item["answer"] for item in pool
+        if item["source_id"] == question["source_id"] and item["answer"] != answer
+    ]
+    same_answer_lang = [
+        item["answer"] for item in pool
+        if item["answer_lang"] == question["answer_lang"] and item["answer"] != answer
+    ]
+    fallback = [item["answer"] for item in pool if item["answer"] != answer]
+
+    candidates = list(dict.fromkeys([*same_source, *same_answer_lang, *fallback]))
+    if len(candidates) < 1:
+        return []
+    random.shuffle(candidates)
+    choices = [answer, *candidates[:3]]
+    random.shuffle(choices)
+    return choices
+
+
 def make_session(source_ids, limit=20):
     if not source_ids:
         raise ValueError("select at least one source")
@@ -83,8 +106,10 @@ def make_session(source_ids, limit=20):
         ).fetchall()
         t = now()
         scored = []
+        pool = []
         for row in rows:
             q = question_dict(row)
+            pool.append(q.copy())
             progress = None if row["seen"] is None else row
             q["progress"] = None if progress is None else {k: row[k] for k in (
                 "seen", "correct", "wrong", "correct_streak", "stability", "difficulty", "due_at",
@@ -92,11 +117,7 @@ def make_session(source_ids, limit=20):
             scored.append((priority(progress, t), q))
         scored.sort(key=lambda x: x[0], reverse=True)
         selected = [q for _, q in scored[:limit]]
-        answers = [question_dict(row)["answer"] for row in rows]
         for q in selected:
             if q["question_type"] != "card" and len(q["choices"]) < 2:
-                distractors = list(dict.fromkeys(a for a in answers if a != q["answer"]))
-                random.shuffle(distractors)
-                q["choices"] = [q["answer"], *distractors[:3]]
-                random.shuffle(q["choices"])
+                q["choices"] = _generated_choices(q, pool)
         return {"questions": selected, "total_pool": len(rows)}
