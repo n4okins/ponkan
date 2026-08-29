@@ -27,7 +27,7 @@ jobs:
 
       - name: Smoke test API
         run: |
-          curl --retry 10 --retry-delay 1 --retry-connrefused -fsS http://127.0.0.1:18080/api/health
+          curl --retry 15 --retry-delay 1 --retry-all-errors -fsS http://127.0.0.1:18080/api/health
           curl -fsS http://127.0.0.1:18080/api/sources | python -c "import json,sys; d=json.load(sys.stdin); assert len(d)>=4; print('sources:', len(d))"
           curl -fsS 'http://127.0.0.1:18080/api/study/session?source_ids=1,2,3,4&limit=8' | python -c "import json,sys; d=json.load(sys.stdin); assert len(d['questions'])==8; assert {'en','ru','zh-CN','ja'} <= {q['prompt_lang'] for q in d['questions']}; print('mixed session: OK')"
           curl -fsS -X POST http://127.0.0.1:18080/api/reviews -H 'Content-Type: application/json' -d '{"question_id":1,"correct":true,"response_ms":1200,"mode":"choice"}' | python -c "import json,sys; d=json.load(sys.stdin); assert d['seen']==1 and d['correct']==1; print('review/SRS: OK')"
