@@ -1,163 +1,300 @@
-# Ponkan 2.0
+# Ponkan 3
 
-**教材ソースを混ぜて学べる、セルフホスト型の汎用SRS / 問題バンク。**
+Ponkan is a self-hosted study platform for vocabulary, languages, certification exams, flashcards, and other recall-based learning.
 
-英単語アプリとして始めた Ponkan を、英語・ロシア語・中国語などの言語学習に加え、情報処理安全確保支援士（セキスペ）など資格学習にも使える汎用学習システムへ変更した版です。
+It provides the same study data through three interfaces:
 
-## 主な機能
+- Web UI for normal study and content management
+- REST API under `/api/v1`
+- MCP server under `/mcp/` for ChatGPT, Claude, Codex, and other MCP clients
 
-- 複数の教材ソースを登録 / 編集 / 削除
-- 学習時に複数ソースを任意選択して混合出題
-- Google Sheets / 公開CSV URLから教材を同期
-- 手動教材・手動問題の登録 / 編集 / 削除
-- `prompt / answer / choices / explanation / tags` の汎用問題モデル
-- `prompt_lang / answer_lang` による英語・ロシア語・中国語等のWeb Speech API読み上げ
-- 4択問題とカード問題の両対応
-- 選択肢を省略した場合、同じ学習プールの他の正答から4択を自動生成
-- 誤答を同一セッション内へ再挿入
-- `stability / difficulty / due_at` を使った簡易SRS
-- SQLiteに教材・問題・学習履歴を永続保存
-- 外部DB・Pythonパッケージ不要
-- Docker / Docker Composeで自宅サーバに常駐可能
+The learning engine is language-agnostic. English, Russian, Chinese, Japanese certification questions, and arbitrary Q&A can live in the same installation.
 
-## 起動
+## Architecture
+
+```text
+Browser / REST client / MCP client
+              |
+              v
++-----------------------------------------+
+| Ponkan app                              |
+| FastAPI + React + MCP Python SDK        |
+|                                         |
+| REST /api/v1   MCP /mcp/   Web UI /     |
+|             \      |      /              |
+|              Domain services            |
+|              SRS scheduler               |
++-------------------+---------------------+
+                    |
+                    v
+               PostgreSQL 16
+```
+
+The Web, REST, and MCP paths share one domain/service layer and one database. Learning state is therefore updated consistently regardless of the client used.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the detailed design and database model.
+
+## Main concepts
+
+### Material
+
+A learner-facing unit such as:
+
+- English vocabulary
+- Русский basic
+- HSK Chinese
+- Information Security Specialist / セキスペ
+- History
+- Internal training
+
+A study session can mix multiple Materials.
+
+### ImportSource
+
+A data source attached to a Material. Google Sheets and public CSV URLs are supported.
+
+`Material` and `ImportSource` are deliberately separate. Removing an import connection does not have to destroy the questions or learning history that came from it.
+
+### Question
+
+The common question model contains:
+
+```text
+prompt
+answer
+explanation
+choices
+question_type
+prompt_lang
+answer_lang
+tags
+metadata
+```
+
+Language is metadata, not a special mode, so the same model works for vocabulary and non-language study.
+
+## Database design
+
+Important tables are:
+
+```text
+learners
+materials
+import_sources
+sync_runs
+questions
+question_options
+tags
+question_tags
+study_sessions
+review_states
+review_events
+```
+
+`review_events` is the append-oriented review history. `review_states` is the current derived SRS state for a learner/question pair. This separation makes future scheduler changes and state reconstruction possible without discarding historical answers.
+
+Remote synchronization archives missing questions instead of immediately deleting their learning history.
+
+## Stack
+
+Backend:
+
+- Python 3.12
+- FastAPI
+- SQLAlchemy 2
+- Alembic
+- Pydantic Settings
+- MCP Python SDK 2.x
+
+Frontend:
+
+- React 19
+- TypeScript
+- Vite
+
+Storage / deployment:
+
+- PostgreSQL 16
+- Docker
+- Docker Compose
+
+Quality:
+
+- pytest
+- Ruff
+- TypeScript typecheck
+- GitHub Actions
+
+## Quick start
+
+Clone the repository and create your environment file:
 
 ```bash
 git clone https://github.com/n4okins/ponkan.git
 cd ponkan
+cp .env.example .env
+```
+
+At minimum, change `POSTGRES_PASSWORD` in `.env`.
+
+Then start Ponkan:
+
+```bash
 docker compose up -d --build
 ```
 
-ブラウザで:
+Open:
 
 ```text
-http://<自宅サーバのIP>:8080
+http://<server-ip>:8080/
 ```
 
-更新:
+Health check:
+
+```text
+http://<server-ip>:8080/api/v1/health
+```
+
+MCP endpoint:
+
+```text
+http://<server-ip>:8080/mcp/
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+Update:
 
 ```bash
 git pull
 docker compose up -d --build
 ```
 
-停止:
+PostgreSQL data is stored in the Docker volume `ponkan-db` and survives container recreation.
 
-```bash
-docker compose down
-```
+## Google Sheets / CSV imports
 
-教材・問題・学習履歴はDocker管理ボリューム `ponkan-data` 内の `/data/ponkan.db` に保存されます。通常の `docker compose down` やコンテナ再作成では消えません。`docker compose down -v` はボリュームも削除するため、データを残す場合は使用しないでください。
-
-## 教材モデル
-
-言語を特別扱いせず、すべてを `Source → Question → Progress` として扱います。
-
-```text
-Source
- ├─ English
- ├─ Русский
- ├─ 中文
- └─ セキスペ
-       ↓
-Question
- ├─ prompt
- ├─ answer
- ├─ choices[]
- ├─ explanation
- ├─ tags[]
- ├─ prompt_lang
- └─ answer_lang
-       ↓
-Progress / Reviews
-```
-
-これにより、歴史、法律、資格、社内研修、暗記カードなども同じ仕組みに追加できます。
-
-## Google Sheets / CSV教材
-
-教材画面で「種類 = Google Sheets / CSV URL」を選び、公開CSV URLを登録します。
-
-Google Sheetsの通常共有URLが以下の形式なら、Ponkan側でCSV export URLへ自動変換します。
-
-```text
-https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit?gid=0
-```
-
-シート自体は、Ponkanサーバから認証なしでCSV取得できる共有状態にしてください。
-
-### 推奨列
+A recommended CSV header is:
 
 ```csv
 id,prompt,answer,choices,explanation,tags,prompt_lang,answer_lang,question_type,enabled
-q1,你好,こんにちは,,nǐ hǎo,chinese|HSK,zh-CN,ja,auto,true
-q2,CSRF対策として直接的なものは？,CSRFトークンを検証する,CSRFトークンを検証する|DNSSEC|Base64化|ポート変更,状態変更リクエストの正当性を検証する,security|web,ja,ja,multiple_choice,true
+q1,спасибо,ありがとう,,感謝を表す,russian|basic,ru,ja,auto,true
+q2,CSRF対策として直接的なものは？,CSRFトークンを検証する,CSRFトークンを検証する|DNSSEC|Base64化|ポート変更,状態変更要求の正当性を検証する,security|web,ja,ja,multiple_choice,true
 ```
 
-- `id`: ソース内で一意。同期時の更新キー
-- `prompt`: 問題
-- `answer`: 正答
-- `choices`: `|` 区切り、またはJSON配列。省略可能
-- `explanation`: 解説
-- `tags`: `,` / `|` / `;` 区切り
-- `prompt_lang`: 読み上げ言語（例 `en`, `ru`, `zh-CN`, `ja`）
-- `answer_lang`: 解答側言語
-- `question_type`: `auto`, `multiple_choice`, `card`
-- `enabled`: `false`, `0`, `off` 等で無効化
-
-### 旧英単語CSVとの互換
-
-旧形式も自動的に読み替えます。
+Legacy vocabulary columns are also accepted and mapped to the generic model:
 
 ```csv
 id,word,meaning,pronunciation,example,example_ja,part_of_speech,level,tags,enabled
 ```
 
-`word → prompt`、`meaning → answer` として取り込みます。
+`word` becomes `prompt` and `meaning` becomes `answer`.
 
-## 学習アルゴリズム
+For Google Sheets, register a shareable Sheet/CSV URL through the Web UI. Remote imports are fetched by the Ponkan server, not by the browser.
 
-各問題に以下を保存します。
+For SSRF reduction, remote hosts are allowlisted with `PONKAN_IMPORT_ALLOWED_HOSTS`. Do not widen that list to arbitrary hosts unless the deployment is otherwise isolated.
 
-- seen / correct / wrong
-- correct_streak
-- stability
-- difficulty
-- due_at
-- last_reviewed_at / last_result
-- avg_response_ms
-- mastery (`weak / fuzzy / almost / mastered`)
+## MCP
 
-想起率の概念モデル:
+Ponkan exposes Streamable HTTP MCP at `/mcp/`.
+
+Current tools include:
+
+- `list_materials`
+- `search_questions`
+- `create_study_session`
+- `submit_review`
+- `create_question`
+- `sync_import`
+- `get_learning_stats`
+
+Resources include:
+
+- `ponkan://materials`
+- `ponkan://stats`
+
+A `daily_review` prompt is also provided for interactive review workflows.
+
+Example MCP client URL:
 
 ```text
-R(t) = 0.9 ^ (t / stability)
+http://ponkan.home.arpa:8080/mcp/
 ```
 
-出題優先度は、未学習・期限超過・低習熟度・推定想起率低下を合成して決めます。正解時は回答速度に応じて `stability` を伸ばし、誤答時は約1/4へ縮めます。
+When using a hostname or LAN IP, add it to `PONKAN_MCP_ALLOWED_HOSTS`; MCP DNS-rebinding protection is enabled by default.
 
-習熟度の目安:
+## SRS model
 
-- `weak`: 直近誤答、または stability < 1日
-- `fuzzy`: 1〜4日
-- `almost`: 4〜14日
-- `mastered`: 14日以上 + 正解数 >= 誤答数 + 2連続正解
+Ponkan currently stores, among other fields:
 
-## バックアップ
+- stability
+- difficulty
+- due time
+- repetitions
+- lapses
+- streak
+- mastery
+- response time
+- algorithm version
 
-SQLiteのオンラインバックアップを作成してからホストへコピーできます。
+Every submitted review writes a historical `review_event` and updates the current `review_state` in the same transaction.
+
+The scheduler is intentionally isolated behind the service layer so it can later be replaced or migrated to another algorithm without redesigning the Web/API/MCP interfaces.
+
+## Security
+
+The default deployment is intended for a trusted home network.
+
+Do not expose the container port directly to the public Internet without an authentication/TLS layer such as Tailscale, WireGuard, Cloudflare Access, Caddy, nginx, or another reverse proxy.
+
+Optional `PONKAN_API_TOKEN` protects REST and MCP with a bearer token. If you use it, clients must send:
+
+```text
+Authorization: Bearer <token>
+```
+
+Also review:
+
+- `PONKAN_MCP_ALLOWED_HOSTS`
+- `PONKAN_MCP_ALLOWED_ORIGINS`
+- `PONKAN_IMPORT_ALLOWED_HOSTS`
+- `PONKAN_FORWARDED_ALLOW_IPS`
+
+before exposing Ponkan outside localhost/LAN.
+
+## Development
+
+Backend:
 
 ```bash
-docker compose exec -T ponkan python -c "import sqlite3; s=sqlite3.connect('/data/ponkan.db'); d=sqlite3.connect('/data/ponkan.db.backup'); s.backup(d); d.close(); s.close()"
-docker cp ponkan:/data/ponkan.db.backup ./ponkan.db.backup
+python -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev]'
+ruff check src tests
+pytest -q
 ```
 
-復元時はPonkanを停止した上でバックアップDBを `/data/ponkan.db` として配置してください。
+Frontend:
 
-## セキュリティ
+```bash
+cd web
+npm install
+npm run typecheck
+npm run build
+```
 
-現状は**単一ユーザーの自宅利用**を想定しており、アプリ自身のログイン認証はありません。インターネットへ直接公開しないでください。
+Database migrations:
 
-外部から使う場合は、Tailscale / WireGuard / Cloudflare Access、またはCaddy/nginx等の認証・TLS付きリバースプロキシを前段に置く構成を推奨します。
+```bash
+alembic upgrade head
+```
 
-公開Google Sheets/CSVを教材に使う場合、そのURLへPonkanサーバ自身がHTTPアクセスします。信頼できるURLのみ登録してください。
+The Docker entrypoint runs Alembic migrations automatically before starting Uvicorn.
+
+## License / content
+
+Ponkan itself is a study platform. Do not redistribute copyrighted commercial wordbooks, exam materials, or other datasets unless you have permission to do so.
