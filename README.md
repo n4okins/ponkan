@@ -2,6 +2,8 @@
 
 Google Sheets を教材DBとして使う、サーバーレスの英単語学習Webアプリのモックです。
 
+公開先（GitHub Pages）: `https://n4okins.github.io/ponkan/`
+
 ## 特徴
 
 - GitHub Pages で完全静的配信
@@ -56,9 +58,7 @@ python3 -m http.server 8080
 
 ## GitHub Pages
 
-このリポジトリを GitHub へ push し、Repository Settings → Pages → Source を `GitHub Actions` に設定します。
-
-`.github/workflows/pages.yml` が `main` への push ごとに静的ファイルを Pages へデプロイします。
+`.github/workflows/pages.yml` が `main` への push ごとに静的ファイルを GitHub Pages へデプロイします。
 
 ## 学習アルゴリズム（モック）
 
