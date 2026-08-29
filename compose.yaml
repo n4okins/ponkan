@@ -1,0 +1,12 @@
+services:
+  ponkan:
+    build: .
+    container_name: ponkan
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      PONKAN_PORT: "8080"
+      PONKAN_MAX_CSV_BYTES: "10485760"
