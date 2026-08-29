@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#fffaf2" />
+  <title>LingoDeck — Vocabulary Trainer</title>
+  <meta name="description" content="Google Sheets driven static vocabulary trainer." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand" aria-label="LingoDeck">
+        <div class="brand-mark">L</div>
+        <div>
+          <div class="brand-name">LingoDeck</div>
+          <div class="brand-sub">vocabulary trainer</div>
+        </div>
+      </div>
+      <button class="icon-button" id="syncButton" title="教材を再読み込み" aria-label="教材を再読み込み">↻</button>
+    </header>
+
+    <main id="app" class="main"></main>
+
+    <nav class="bottom-nav" aria-label="メインナビゲーション">
+      <button data-route="home" class="nav-item active"><span>⌂</span><small>ホーム</small></button>
+      <button data-route="learn" class="nav-item"><span>▶</span><small>学習</small></button>
+      <button data-route="words" class="nav-item"><span>≡</span><small>単語</small></button>
+      <button data-route="stats" class="nav-item"><span>▥</span><small>進捗</small></button>
+      <button data-route="settings" class="nav-item"><span>⚙</span><small>設定</small></button>
+    </nav>
+  </div>
+
+  <template id="homeTemplate">
+    <section class="page home-page">
+      <div class="greeting-row">
+        <div>
+          <p class="eyebrow">TODAY</p>
+          <h1>今日の英単語</h1>
+          <p class="muted" id="dataSourceLabel">教材を読み込み中...</p>
+        </div>
+        <div class="streak-pill"><b id="streakCount">0</b><span>day streak</span></div>
+      </div>
+
+      <article class="hero-card">
+        <div class="hero-topline">
+          <span class="chip">DAILY SESSION</span>
+          <span id="dueText">0 words due</span>
+        </div>
+        <h2><span id="todayGoal">20</span>語を、短く濃く。</h2>
+        <p>忘れかけた単語から優先して、間違えた単語は同じセッション内でもう一度。</p>
+        <div class="progress-track"><div class="progress-bar" id="dailyProgress"></div></div>
+        <div class="hero-actions">
+          <button class="primary-button" id="startSession">学習をはじめる</button>
+          <button class="secondary-button" id="quickReview">復習だけ</button>
+        </div>
+      </article>
+
+      <div class="section-title"><h3>習熟度</h3><span id="wordCountLabel">0語</span></div>
+      <div class="mastery-grid" id="masteryGrid"></div>
+
+      <div class="section-title"><h3>最近の学習</h3><span>直近7日</span></div>
+      <article class="panel activity-panel">
+        <div class="activity-summary">
+          <div><b id="weeklyAnswers">0</b><span>回答</span></div>
+          <div><b id="weeklyAccuracy">—</b><span>正答率</span></div>
+          <div><b id="weeklyMinutes">0</b><span>分</span></div>
+        </div>
+        <div class="mini-bars" id="miniBars"></div>
+      </article>
+    </section>
+  </template>
+
+  <template id="learnTemplate">
+    <section class="page learn-page">
+      <div class="session-header">
+        <button class="text-button" id="exitSession">終了</button>
+        <div class="session-progress"><div id="sessionProgressBar"></div></div>
+        <div class="session-count"><span id="sessionDone">0</span>/<span id="sessionTotal">0</span></div>
+      </div>
+      <div id="learnStage"></div>
+    </section>
+  </template>
+
+  <template id="wordsTemplate">
+    <section class="page">
+      <div class="page-heading"><div><p class="eyebrow">LIBRARY</p><h1>単語一覧</h1></div><span id="wordsTotal" class="count-badge">0</span></div>
+      <div class="search-row"><input id="wordSearch" type="search" placeholder="単語・意味・タグで検索" /><select id="masteryFilter"><option value="all">すべて</option><option value="weak">苦手</option><option value="fuzzy">うろ覚え</option><option value="almost">ほぼ覚えた</option><option value="mastered">覚えた</option></select></div>
+      <div id="wordList" class="word-list"></div>
+    </section>
+  </template>
+
+  <template id="statsTemplate">
+    <section class="page">
+      <div class="page-heading"><div><p class="eyebrow">PROGRESS</p><h1>学習進捗</h1></div></div>
+      <div class="stats-cards" id="statsCards"></div>
+      <article class="panel chart-panel"><div class="section-title in-panel"><h3>7日間の回答数</h3></div><div id="weekChart" class="week-chart"></div></article>
+      <article class="panel"><div class="section-title in-panel"><h3>記憶状態</h3></div><div id="masteryBreakdown" class="mastery-breakdown"></div></article>
+    </section>
+  </template>
+
+  <template id="settingsTemplate">
+    <section class="page">
+      <div class="page-heading"><div><p class="eyebrow">SETTINGS</p><h1>教材・学習設定</h1></div></div>
+      <article class="panel settings-panel">
+        <label>Google Sheets 公開CSV URL<textarea id="sheetUrl" rows="4" placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?gid=0&single=true&output=csv"></textarea></label>
+        <p class="help">「ファイル → 共有 → ウェブに公開」で対象シートをCSV公開し、そのURLを指定します。空欄なら同梱サンプルを使用します。</p>
+        <div class="settings-row"><label>1日の目標<input id="dailyGoalInput" type="number" min="5" max="200" step="5" /></label><label>出題数<input id="sessionSizeInput" type="number" min="5" max="100" step="5" /></label></div>
+        <label class="toggle-row"><span><b>発音を自動再生</b><small>Web Speech APIを使用</small></span><input id="autoSpeak" type="checkbox" /></label>
+        <label class="toggle-row"><span><b>新規単語を含める</b><small>復習対象が少ないときに追加</small></span><input id="includeNew" type="checkbox" /></label>
+        <button class="primary-button full" id="saveSettings">保存して再読み込み</button>
+      </article>
+      <article class="panel danger-panel"><div><b>学習履歴をリセット</b><p>この端末のIndexedDB / localStorage相当の学習状態のみ削除します。</p></div><button class="danger-button" id="resetProgress">リセット</button></article>
+    </section>
+  </template>
+
+  <script src="./config.js"></script>
+  <script src="./db.js"></script>
+  <script src="./app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "LingoDeck Vocabulary Trainer",
+  "short_name": "LingoDeck",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#fffaf2",
+  "theme_color": "#fffaf2",
+  "description": "Static vocabulary trainer powered by Google Sheets."
+}
