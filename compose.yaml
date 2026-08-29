@@ -1,15 +1,35 @@
 services:
-  ponkan:
-    build: .
-    container_name: ponkan
+  db:
+    image: postgres:16-alpine
     restart: unless-stopped
-    ports:
-      - "8080:8080"
-    volumes:
-      - ponkan-data:/data
     environment:
-      PONKAN_PORT: "8080"
-      PONKAN_MAX_CSV_BYTES: "10485760"
+      POSTGRES_DB: ${POSTGRES_DB:-ponkan}
+      POSTGRES_USER: ${POSTGRES_USER:-ponkan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - ponkan-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ponkan} -d ${POSTGRES_DB:-ponkan}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PONKAN_PORT:-8080}:8080"
+    environment:
+      PONKAN_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ponkan}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-ponkan}
+      PONKAN_API_TOKEN: ${PONKAN_API_TOKEN:-}
+      PONKAN_MCP_ALLOWED_HOSTS: ${PONKAN_MCP_ALLOWED_HOSTS:-localhost,localhost:*,127.0.0.1,127.0.0.1:*}
+      PONKAN_MCP_ALLOWED_ORIGINS: ${PONKAN_MCP_ALLOWED_ORIGINS:-}
+      PONKAN_IMPORT_ALLOWED_HOSTS: ${PONKAN_IMPORT_ALLOWED_HOSTS:-docs.google.com,googleusercontent.com}
+      PONKAN_SEED_DEMO: ${PONKAN_SEED_DEMO:-true}
+      PONKAN_FORWARDED_ALLOW_IPS: ${PONKAN_FORWARDED_ALLOW_IPS:-127.0.0.1}
 
 volumes:
-  ponkan-data:
+  ponkan-db:
